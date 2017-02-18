@@ -1,0 +1,70 @@
+# Choose between www and non-www, listen on the *wrong* one and redirect to
+# the right one -- http://wiki.nginx.org/Pitfalls#Server_Name
+#
+
+upstream mst_upstream {
+    server 127.0.0.1:8000;
+    keepalive 64;
+}
+
+upstream grcupdate_upstream {
+    server 127.0.0.1:5000;
+}
+
+upstream dockerhook_upstream {
+    server unix:/var/run/gunicorn/socket;
+}
+
+server {
+    listen [::]:443 ssl http2;
+    listen 443 ssl http2;
+
+    # listen on the wrong host
+    server_name www.massshootingtracker.org;
+
+    include h5bp/basic.conf;
+    include h5bp/directive-only/ssl.conf;
+    include h5bp/directive-only/ssl-stapling.conf;
+    include h5bp/directive-only/extra-security.conf;
+
+    # and redirect to the non-www host (declared below)
+    return 301 https://example.com$request_uri;
+}
+
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+
+    server_name massshootingtracker.org;
+
+    include h5bp/basic.conf;
+    include h5bp/directive-only/ssl.conf;
+    include h5bp/directive-only/ssl-stapling.conf;
+    include h5bp/directive-only/extra-security.conf;
+    ssl_certificate /etc/letsencrypt/live/massshootingtracker.org/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/massshootingtracker.org/privkey.pem;
+
+
+    location / {
+        proxy_redirect off;
+        proxy_set_header    X-Real-IP $remote_addr;
+        proxy_set_header    X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header    X-Forwarded-Proto $scheme;
+        proxy_set_header    Host $http_host;
+        proxy_set_header    X-NginX-Proxy true;
+        proxy_set_header    Connection "";
+        proxy_http_version  1.1;
+        proxy_cache one;
+        proxy_cache_key sfs$request_uri$scheme;
+        proxy_pass          http://mst_upstream;
+    }
+
+    location = /grcupdate {
+        proxy_pass http://grcupdate_upstream/grcupdate;
+    }
+
+    location = /hubhook {
+        proxy_pass http://dockerhook_upstream/hubhook;
+    }
+}
